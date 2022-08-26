@@ -41,17 +41,17 @@ pub struct ProtoControlSocket {
 }
 
 pub enum PeerType {
-    AnyClient(Vec<IpAddr>),
+    AnyClient(Vec<IpAddr>, u16),
     Server,
 }
 
 impl ProtoControlSocket {
     pub async fn connect_to(peer: PeerType) -> StrResult<(Self, IpAddr)> {
         let socket = match peer {
-            PeerType::AnyClient(ips) => {
+            PeerType::AnyClient(ips, port) => {
                 let client_addresses = ips
                     .iter()
-                    .map(|&ip| (ip, CONTROL_PORT).into())
+                    .map(|&ip| (ip, port).into())
                     .collect::<Vec<_>>();
                 trace_err!(TcpStream::connect(client_addresses.as_slice()).await)?
             }

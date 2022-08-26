@@ -1,4 +1,4 @@
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, time::Duration,};
 
 use crate::StreamId;
 use alvr_common::{
@@ -49,6 +49,13 @@ pub struct HeadsetInfoPacket {
     // reserved field is used to add features in a minor release that otherwise would break the
     // packets schema
     pub reserved: String,
+    // 1.1.0 增加传递服务器地址
+    pub server_addr: String,
+    // 1.0.2增加传递接口
+    // 客户端 --> 服务端 握手阶段使用的端口(非服务端启动服务的端口)
+    pub control_port: u16,
+    // 客户端 --> 服务端 视频流的端口(非服务端启动服务的端口)
+    pub stream_port: u16,
 }
 
 #[derive(Serialize, Deserialize)]

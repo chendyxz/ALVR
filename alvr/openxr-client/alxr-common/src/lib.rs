@@ -183,6 +183,9 @@ pub fn init_connections(sys_properties: &ALXRSystemProperties) {
             available_refresh_rates,
             preferred_refresh_rate,
             reserved: format!("{}", *ALVR_VERSION),
+            server_addr: &"192.168.9.144",
+            control_port: 21902,
+            stream_port: 21904,
         };
 
         println!(

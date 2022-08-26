@@ -115,8 +115,14 @@ async fn connection_pipeline(
 
     println!("host_name: {0}", handshake_packet.version);
 
+    // let addr_ip = server_addr.parse().unwrap();
+    let addr_ip = headset_info.server_addr.parse().unwrap();
+
     let (mut proto_socket, server_ip) = tokio::select! {
-        res = connection_utils::announce_client_loop(handshake_packet) => {
+        res = connection_utils::announce_client_loop(
+            addr_ip,
+            headset_info.control_port,
+            handshake_packet) => {
             match res? {
                 ConnectionError::ServerMessage(message) => {
                     info!("Server response: {:?}", message);
@@ -156,16 +162,36 @@ async fn connection_pipeline(
         },
         pair = async {
             loop {
-                if let Ok(pair) = ProtoControlSocket::connect_to(PeerType::Server).await {
+                // 客户端 --tcp--> 服务端
+                if let Ok(pair) = ProtoControlSocket::connect_to(
+                    PeerType::AnyClient(
+                        vec![addr_ip],
+                        headset_info.control_port,
+                    )
+                ).await {
                     break pair;
                 }
 
+
+                // 客户端 <--tcp-- 服务端
+                // if let Ok(pair) = ProtoControlSocket::connect_to(PeerType::Server).await {
+                //     break pair;
+                // }
+                info!("Timeout while searching for Server. Retrying");
                 time::sleep(CONTROL_CONNECT_RETRY_PAUSE).await;
             }
         } => pair
     };
 
-    trace_err!(proto_socket.send(&(headset_info, server_ip)).await)?;
+    let data = &(headset_info, server_ip);
+    let _result = tokio::select! {
+        result = proto_socket.send(data) => result,
+        _ = time::sleep(CONTROL_CONNECT_RETRY_PAUSE) => {
+            return fmt_e!("reloop");
+        }
+    };
+
+    //trace_err!(proto_socket.send(&(headset_info, server_ip)).await)?;
     let config_packet = trace_err!(proto_socket.recv::<ClientConfigPacket>().await)?;
 
     let (control_sender, mut control_receiver) = proto_socket.split();
@@ -205,7 +231,8 @@ async fn connection_pipeline(
             info!("Unexpected packet");
             println!("Unexpected packet");
             //set_loading_message(&*java_vm, &*activity_ref, hostname, "Unexpected packet")?;
-            return Ok(());
+            //return Ok(());
+            return fmt_e!("reloop error");
         }
     }
 
@@ -215,11 +242,19 @@ async fn connection_pipeline(
         session_desc.to_settings()
     };
 
+    // 仅在 客户端 <--tcp-- 服务端 时使用
     let stream_socket_builder = StreamSocketBuilder::listen_for_server(
-        settings.connection.stream_port,
+        // 修改为客户端传递过来的视频流端口
+        headset_info.stream_port,
         settings.connection.stream_protocol,
     )
     .await?;
+
+    // let stream_socket_builder = StreamSocketBuilder::listen_for_server(
+    //     settings.connection.stream_port,
+    //     settings.connection.stream_protocol,
+    // )
+    // .await?;
 
     if let Err(e) = control_sender
         .lock()
@@ -240,16 +275,30 @@ async fn connection_pipeline(
     }
     println!("StreamReady");
 
+
+    // 仅在 客户端 <--tcp-- 服务端 时使用
     let stream_socket = tokio::select! {
         res = stream_socket_builder.accept_from_server(
             server_ip,
-            settings.connection.stream_port,
+            // 修改为客户端传递过来的视频流端口
+            headset_info.stream_port,
         ) => res?,
         _ = time::sleep(Duration::from_secs(5)) => {
-            println!("Timeout while setting up streams");
             return fmt_e!("Timeout while setting up streams");
         }
     };
+
+    // let stream_socket = tokio::select! {
+    //     res = stream_socket_builder.accept_from_server(
+    //         server_ip,
+    //         settings.connection.stream_port,
+    //     ) => res?,
+    //     _ = time::sleep(Duration::from_secs(5)) => {
+    //         println!("Timeout while setting up streams");
+    //         return fmt_e!("Timeout while setting up streams");
+    //     }
+    // };
+
     let stream_socket = Arc::new(stream_socket);
     info!("Connected to server");
     println!("Connected to server");
@@ -807,18 +856,26 @@ pub async fn connection_lifecycle_loop(
                 .await;
 
                 if let Err(e) = maybe_error {
-                    let message =
+                    if e.contains("reloop") || 
+                        e.contains("Connection reset by peer") || 
+                        e.contains("control_socket.rs:87") || 
+                        e.contains("control_socket.rs:88") || 
+                        e.contains("control_socket.rs") {
+                        info!("nano: msg {e}");
+                    } else {
+                        let message =
                         format!("Connection error:\n{}\nCheck the PC for more details", e);
-                    error!("{}", message);
-                    println!("{}", message);
-                    // set_loading_message(
-                    //     &*java_vm,
-                    //     &*activity_ref,
-                    //     &private_identity.hostname,
-                    //     &message,
-                    // )
-                    // .ok();
-                    unsafe { crate::alxr_on_server_disconnect() };
+                        error!("{}", message);
+                        println!("{}", message);
+                        // set_loading_message(
+                        //     &*java_vm,
+                        //     &*activity_ref,
+                        //     &private_identity.hostname,
+                        //     &message,
+                        // )
+                        // .ok();
+                        unsafe { crate::alxr_on_server_disconnect() };
+                    }
                 }
 
                 // let any running task or socket shutdown

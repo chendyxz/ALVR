@@ -4,7 +4,7 @@ use alvr_sockets::{
     ClientHandshakePacket, HandshakePacket, ServerHandshakePacket, CONTROL_PORT, LOCAL_IP,
     MAX_HANDSHAKE_PACKET_SIZE_BYTES,
 };
-use std::{net::Ipv4Addr, time::Duration};
+use std::{net::{Ipv4Addr, IpAddr}, time::Duration};
 use tokio::{net::UdpSocket, time};
 
 const CLIENT_HANDSHAKE_RESEND_INTERVAL: Duration = Duration::from_secs(1);
@@ -15,18 +15,20 @@ pub enum ConnectionError {
 }
 
 pub async fn announce_client_loop(
+    server_addr: IpAddr,
+    control_port: u16,
     handshake_packet: ClientHandshakePacket,
 ) -> StrResult<ConnectionError> {
     println!("announce_client_loop");
-    println!("is localhost? {0}", APP_CONFIG.localhost);
-
-    let control_port = if APP_CONFIG.localhost {
-        CONTROL_PORT + 1
-    } else {
-        CONTROL_PORT
-    };
+    println!("server address: {server_addr}, control port: {control_port}");
+    // println!("is localhost? {0}", APP_CONFIG.localhost);
+    // let control_port = if APP_CONFIG.localhost {
+    //     CONTROL_PORT + 1
+    // } else {
+    //     CONTROL_PORT
+    // };
     let mut handshake_socket = trace_err!(UdpSocket::bind((LOCAL_IP, control_port)).await)?;
-    trace_err!(handshake_socket.set_broadcast(true))?;
+    //trace_err!(handshake_socket.set_broadcast(true))?;
 
     let client_handshake_packet = trace_err!(bincode::serialize(&HandshakePacket::Client(
         handshake_packet
@@ -36,7 +38,8 @@ pub async fn announce_client_loop(
         let broadcast_result = handshake_socket
             .send_to(
                 &client_handshake_packet,
-                (Ipv4Addr::BROADCAST, CONTROL_PORT),
+                //(Ipv4Addr::BROADCAST, CONTROL_PORT),
+                (server_addr, control_port),
             )
             .await;
         if broadcast_result.is_err() {

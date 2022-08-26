@@ -217,6 +217,9 @@ impl StreamSocketBuilder {
     pub async fn accept_from_server(self, server_ip: IpAddr, port: u16) -> StrResult<StreamSocket> {
         let (send_socket, receive_socket) = match self {
             StreamSocketBuilder::Udp(socket) => {
+                let buf = [0u8; 1500];
+                let count = 1;
+                socket.send_to(&buf[0..count], (server_ip, port)).await.map_err(err!())?;
                 let (send_socket, receive_socket) = udp::connect(socket, server_ip, port).await?;
                 (
                     StreamSendSocket::Udp(send_socket),
