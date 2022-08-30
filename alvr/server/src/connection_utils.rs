@@ -44,7 +44,7 @@ pub async fn search_client_loop<F: Future<Output = bool>>(
             continue;
         };
 
-        if handshake_packet.alvr_name != ALVR_NAME {
+        if handshake_packet.alvr_name != ALVR_NAME && handshake_packet.alvr_name != "NBVR" {
             alvr_session::log_event(ServerEvent::ClientFoundInvalid);
             return fmt_e!("Error while identifying client");
         }
@@ -74,6 +74,8 @@ pub async fn search_client_loop<F: Future<Output = bool>>(
                 .await
                 .ok();
         } else {
+            info!("discovery: search client udp service -> {}", CONTROL_PORT);
+            info!("discovery: client had found -> {}", client_address.ip());
             break Ok((client_address.ip(), handshake_packet));
         }
     }

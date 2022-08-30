@@ -12,7 +12,19 @@ pub use packets::*;
 pub use stream_socket::*;
 
 pub const LOCAL_IP: IpAddr = IpAddr::V4(Ipv4Addr::UNSPECIFIED);
-pub const CONTROL_PORT: u16 = 9943;
+
+//pub const CONTROL_PORT: u16 = 9943;
+// 控制端口需要开启TCP+UDP协议
+// 海外 21905, 国内 21900
+// 国内国外使用 21902
+pub const CONTROL_PORT: u16 = 21902;
+// 视频流端口只需UDP协议
+// 服务端开启视频流服务端口，原来是通过session的stream_port=9944传递，现在改为固定
+// 海外 21906, 国内 21901
+// 国内国外使用 21904
+pub const SERVER_STREAM_PORT: u16 = 21904;
+
+
 pub const MAX_HANDSHAKE_PACKET_SIZE_BYTES: usize = 4_000;
 
 type Ldc = tokio_util::codec::LengthDelimitedCodec;

@@ -1,3 +1,4 @@
+mod fec;
 use alvr_common::{lazy_static, prelude::*};
 use alvr_session::{AudioConfig, AudioDeviceId, LinuxAudioBackend};
 use alvr_sockets::{StreamReceiver, StreamSender};
@@ -7,7 +8,7 @@ use cpal::{
 };
 use parking_lot::Mutex;
 use rodio::{OutputStream, Source};
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
 use std::{
     collections::VecDeque,
     sync::{mpsc as smpsc, Arc},
@@ -53,6 +54,21 @@ lazy_static! {
             "VoiceMeeter VAIO3 Output".into()
         ),
     ];
+}
+
+#[derive(Clone, Copy, Serialize, Deserialize, Debug)]
+pub struct FrameHeader {
+    pub media_type: u8,         // NBVR_PACKET_TYPE_AUDIO_FRAME
+    pub packet_counter: usize,  // 总包数
+    pub frame_index: u32,       // 帧索引
+    pub sent_time: i64,         // 发送时间
+    pub frame_byte_size: usize, // 帧大小
+    pub packet_size: usize,     // 包大小
+    pub packet_index: usize,    // 包索引
+    pub fec_counter: usize,     // fec数据包个数
+    pub fec_percentage: usize,  // fec百分比
+    pub fec_index: usize,       // fec包开始索引
+    pub first_packet: u8,       // 是否是第一个包, 1: 是最后一个, 0: 不是
 }
 
 #[derive(Serialize)]
@@ -350,7 +366,7 @@ pub async fn record_audio_loop(
     channels_count: u16,
     sample_rate: u32,
     mute: bool,
-    mut sender: StreamSender<()>,
+    mut sender: StreamSender<FrameHeader>,
 ) -> StrResult {
     let maybe_config_range = trace_err!(device.inner.supported_output_configs())?.next();
     let config = if let Some(config) = maybe_config_range {
@@ -455,11 +471,28 @@ pub async fn record_audio_loop(
         }
     });
 
+    // while let Some(maybe_data) = data_receiver.recv().await {
+    //     let data = maybe_data?;
+    //     let mut buffer = sender.new_buffer(&(), data.len())?;
+    //     buffer.get_mut().extend(data);
+    //     sender.send_buffer(buffer).await.ok();
+    // }
+
+    let mut findex = 0;
     while let Some(maybe_data) = data_receiver.recv().await {
         let data = maybe_data?;
-        let mut buffer = sender.new_buffer(&(), data.len())?;
-        buffer.get_mut().extend(data);
-        sender.send_buffer(buffer).await.ok();
+        // 收到采集的音频，使用fec编码
+        let data_arr = fec::encode(data, findex);
+        // let mut buffer = sender.new_buffer(&data_arr[0].0, data.len())?;
+        // buffer.get_mut().extend(data);
+        // sender.send_buffer(buffer).await.ok();
+        for (header, ele) in data_arr {
+            //info!("nane: {:?} ==== {:?}", &header, ele);
+            let mut buffer = sender.new_buffer(&header, ele.len())?;
+            buffer.get_mut().extend(ele);
+            sender.send_buffer(buffer).await.ok();
+        }
+        findex = findex + 1;
     }
 
     Ok(())
@@ -500,35 +533,86 @@ pub fn get_next_frame_batch(
 // callback will gracefully handle an interruption, and the callback timing and sound wave
 // continuity will not be affected.
 pub async fn receive_samples_loop(
-    mut receiver: StreamReceiver<()>,
+    mut receiver: StreamReceiver<FrameHeader>,
     sample_buffer: Arc<Mutex<VecDeque<f32>>>,
     channels_count: usize,
     batch_frames_count: usize,
     average_buffer_frames_count: usize,
 ) -> StrResult {
     let mut recovery_sample_buffer = vec![];
+
+    let mut packet_arr = Box::new(vec![]);
+    let mut last_frame_index: u32 = 0;
     loop {
-        let packet = receiver.recv().await?;
+        let mut packet = receiver.recv().await?;
+
+
+        // ----------------------------fec------------------------------------
+        // info!("nane: packet ==> {:?}", packet);
+        let header = packet.header;
+
+        // 如果是第一个包,放入数组
+        if header.first_packet == 1 && header.frame_index != 0 {
+            packet_arr.push(packet.clone());
+        }
+        // 第一帧,不判断
+        if header.first_packet == 0 && last_frame_index == header.frame_index {
+            // 添加到数组中
+            packet_arr.push(packet);
+            continue;
+        }
+        //info!("nane: receive ==> {:?}", packet_arr);
+        // info!("nane: receive packet per frame");
+
+        // 接收一个完整的包，送去fec恢复或者直接播放
+        packet.buffer = fec::reconstruct_data(header, (&packet_arr).to_vec());
+
+        // 添加完成所有包后，帧索引更新
+        last_frame_index = header.frame_index;
+
+        // 清空数组
+        packet_arr.clear();
+        // ----------------------------fec------------------------------------
+
+
+
         let new_samples = packet
             .buffer
             .chunks_exact(2)
             .map(|c| i16::from_ne_bytes([c[0], c[1]]).to_f32())
             .collect::<Vec<_>>();
 
+
+        // ----------------------------fec------------------------------------
+        // 判断是否是全为0的数组
+        let mut counter = 0;
+        for ele in &new_samples {
+            if *ele == 0.0 {
+                counter = counter +1;
+            }
+        }
+        //info!("nane: zero counter ==> counter: {}, len: {}", counter, new_samples.len());
+        // 如果全为0则跳过不播放
+        if counter == new_samples.len()-1 {
+            continue;
+        }
+        // ----------------------------fec------------------------------------
+
+
         let mut sample_buffer_ref = sample_buffer.lock();
 
-        if packet.had_packet_loss {
-            info!("Audio packet loss!");
+        // if packet.had_packet_loss {
+        //     info!("Audio packet loss!");
 
-            if sample_buffer_ref.len() / channels_count < batch_frames_count {
-                sample_buffer_ref.clear();
-            } else {
-                // clear remaining samples
-                sample_buffer_ref.drain(batch_frames_count * channels_count..);
-            }
+        //     if sample_buffer_ref.len() / channels_count < batch_frames_count {
+        //         sample_buffer_ref.clear();
+        //     } else {
+        //         // clear remaining samples
+        //         sample_buffer_ref.drain(batch_frames_count * channels_count..);
+        //     }
 
-            recovery_sample_buffer.clear();
-        }
+        //     recovery_sample_buffer.clear();
+        // }
 
         if sample_buffer_ref.len() / channels_count < batch_frames_count {
             recovery_sample_buffer.extend(sample_buffer_ref.drain(..));
@@ -646,7 +730,7 @@ pub async fn play_audio_loop(
     channels_count: u16,
     sample_rate: u32,
     config: AudioConfig,
-    receiver: StreamReceiver<()>,
+    receiver: StreamReceiver<FrameHeader>,
 ) -> StrResult {
     // Size of a chunk of frames. It corresponds to the duration if a fade-in/out in frames.
     let batch_frames_count = sample_rate as usize * config.batch_ms as usize / 1000;

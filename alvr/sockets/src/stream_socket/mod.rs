@@ -18,7 +18,7 @@ use std::{
     marker::PhantomData,
     net::IpAddr,
     ops::{Deref, DerefMut},
-    sync::Arc,
+    sync::Arc, clone,
 };
 use tcp::{TcpStreamReceiveSocket, TcpStreamSendSocket};
 use throttled_udp::{ThrottledUdpStreamReceiveSocket, ThrottledUdpStreamSendSocket};
@@ -158,6 +158,7 @@ enum StreamReceiverType {
     // QuicReliable(...)
 }
 
+#[derive(Clone, Debug)]
 pub struct ReceivedPacket<T> {
     pub header: T,
     pub buffer: BytesMut,
@@ -260,7 +261,9 @@ impl StreamSocketBuilder {
         let (send_socket, receive_socket) = match protocol {
             SocketProtocol::Udp => {
                 let sock = udp::bind(port).await?;
-                let (send_socket, receive_socket) = udp::connect(sock, client_ip, port).await?;
+                let mut buf = [0u8; 1500];
+                let (_, addr) = sock.recv_from(&mut buf).await.map_err(err!())?;
+                let (send_socket, receive_socket) = udp::connect(sock, client_ip, addr.port()).await?;
                 (
                     StreamSendSocket::Udp(send_socket),
                     StreamReceiveSocket::Udp(receive_socket),

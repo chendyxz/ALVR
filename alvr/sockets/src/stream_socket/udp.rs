@@ -61,11 +61,11 @@ pub async fn receive_loop(
     packet_enqueuers: Arc<Mutex<HashMap<StreamId, mpsc::UnboundedSender<BytesMut>>>>,
 ) -> StrResult {
     while let Some(maybe_packet) = socket.inner.next().await {
-        let (mut packet_bytes, address) = trace_err!(maybe_packet)?;
+        let (mut packet_bytes, _address) = trace_err!(maybe_packet)?;
 
-        if address != socket.peer_addr {
-            continue;
-        }
+        // if address != socket.peer_addr {
+        //     continue;
+        // }
 
         let stream_id = packet_bytes.get_u16();
         if let Some(enqueuer) = packet_enqueuers.lock().await.get_mut(&stream_id) {

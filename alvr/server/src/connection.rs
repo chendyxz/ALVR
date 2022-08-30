@@ -17,7 +17,7 @@ use alvr_session::{
 use alvr_sockets::{
     spawn_cancelable, ClientConfigPacket, ClientControlPacket, ControlSocketReceiver,
     ControlSocketSender, HeadsetInfoPacket, Input, PeerType, ProtoControlSocket,
-    ServerControlPacket, StreamSocketBuilder, AUDIO, HAPTICS, INPUT, VIDEO,
+    ServerControlPacket, StreamSocketBuilder, AUDIO, HAPTICS, INPUT, VIDEO, SERVER_STREAM_PORT,
 };
 use futures::future::{BoxFuture, Either};
 use settings_schema::Switch;
@@ -105,14 +105,30 @@ async fn client_handshake(
         )
     };
 
+    if client_ips.len() > 0 {
+        info!("A connection has been established on the client");
+        for ele in client_ips {
+            info!("connect: client ip {ele:?}");
+        }
+    }
+
+    // info!("准备连接中...");
     let (mut proto_socket, client_ip) = loop {
-        if let Ok(pair) =
-            ProtoControlSocket::connect_to(PeerType::AnyClient(client_ips.clone())).await
-        {
+        // 1 仅在handshake阶段 客户端 --tcp--> 服务端 时使用
+        if let Ok(pair) = ProtoControlSocket::connect_to(PeerType::Server).await {
+            // info!("tcp pair: {:?}", pair.1);
+            info!("connect: handshake connected complete, {}", pair.1);
             break pair;
         }
 
-        debug!("Timeout while searching for client. Retrying");
+        // 2 仅在handshake阶段 客户端 <<--tcp-- 服务端 时使用
+        // if let Ok(pair) =
+        //     ProtoControlSocket::connect_to(PeerType::AnyClient(client_ips.clone())).await
+        // {
+        //     info!("tcp pair: {:?}", pair.1);
+        //     break pair;
+        // }
+        info!("Timeout while searching for client. Retrying");
         time::sleep(CONTROL_CONNECT_RETRY_PAUSE).await;
     };
 
@@ -553,8 +569,9 @@ async fn connection_pipeline() -> StrResult {
                     }
                     Either::Right(Err(e)) => {
                         // do not treat handshake problems as an hard error
-                        warn!("Handshake: {e}");
-                        return Ok(());
+                        info!("Handshake: {e}");
+                        //return Ok(());
+                        return fmt_e!("reloop handshake");
                     }
                 }
             }
@@ -584,23 +601,41 @@ async fn connection_pipeline() -> StrResult {
             return fmt_e!("Got unexpected packet waiting for stream ack");
         }
         Err(e) => {
-            return fmt_e!("Error while waiting for stream ack: {e}");
+            //return fmt_e!("Error while waiting for stream ack: {e}");
+            return fmt_e!("reloop stream ask: {e}");
         }
     }
 
     let settings = SESSION_MANAGER.lock().get().to_settings();
 
-    let stream_socket = tokio::select! {
+     // 2 仅在handshake阶段 客户端 <--tcp-- 服务端 时使用
+     let stream_socket = tokio::select! {
         res = StreamSocketBuilder::connect_to_client(
             client_ip,
-            settings.connection.stream_port,
+            // 取消通过session配置文件获取stream_prot
+            // 使用固定接口
+            SERVER_STREAM_PORT,
             settings.connection.stream_protocol,
-            mbits_to_bytes(settings.video.encode_bitrate_mbs)
+            mbits_to_bytes(settings.video.encode_bitrate_mbs),
         ) => res?,
         _ = time::sleep(Duration::from_secs(5)) => {
-            return fmt_e!("Timeout while setting up streams");
+            return fmt_e!("reloop Timeout while setting up streams");
         }
     };
+
+    // let stream_socket = tokio::select! {
+    //     res = StreamSocketBuilder::connect_to_client(
+    //         client_ip,
+    //         settings.connection.stream_port,
+    //         settings.connection.stream_protocol,
+    //         mbits_to_bytes(settings.video.encode_bitrate_mbs)
+    //     ) => res?,
+    //     _ = time::sleep(Duration::from_secs(5)) => {
+    //         return fmt_e!("Timeout while setting up streams");
+    //     }
+    // };
+
+    info!("stream: udp stream connected");
     let stream_socket = Arc::new(stream_socket);
 
     alvr_session::log_event(ServerEvent::ClientConnected);
@@ -1064,8 +1099,16 @@ pub async fn connection_lifecycle_loop() {
     loop {
         tokio::join!(
             async {
-                alvr_common::show_err(connection_pipeline().await);
-
+                let maybe_error = connection_pipeline().await;
+                if let Err(e) = maybe_error {
+                    if e.contains("reloop") {
+                        // reloop
+                        info!("reloop error -> {e}");
+                    } else {
+                        let res: Result<(), &str> = Err(e.as_str());
+                        alvr_common::show_err(res);
+                    }
+                }
                 // let any running task or socket shutdown
                 time::sleep(CLEANUP_PAUSE).await;
             },

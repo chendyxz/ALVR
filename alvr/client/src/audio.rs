@@ -1,5 +1,6 @@
 use alvr_common::prelude::*;
 use alvr_session::AudioConfig;
+use alvr_audio::FrameHeader;
 use alvr_sockets::{StreamReceiver, StreamSender, AUDIO};
 use oboe::{
     AudioInputCallback, AudioInputStreamSafe, AudioOutputCallback, AudioOutputStreamSafe,
@@ -107,7 +108,7 @@ impl AudioOutputCallback for PlayerCallback {
 pub async fn play_audio_loop(
     sample_rate: u32,
     config: AudioConfig,
-    receiver: StreamReceiver<()>,
+    receiver: StreamReceiver<FrameHeader>,
 ) -> StrResult {
     let batch_frames_count = sample_rate as usize * config.batch_ms as usize / 1000;
     let average_buffer_frames_count =
