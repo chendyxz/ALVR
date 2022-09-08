@@ -5,7 +5,7 @@ plugins {
 
 android {
     compileSdk 32
-    ndkVersion '25.0.8775105' //'24.0.8215888' //'23.1.7779620'
+    ndkVersion '25.1.8937393' //'24.0.8215888' //'23.1.7779620'
 
     defaultConfig {
         //applicationId "com.alvr.alxr_client"

@@ -184,6 +184,7 @@ pub fn init_connections(sys_properties: &ALXRSystemProperties) {
             preferred_refresh_rate,
             reserved: format!("{}", *ALVR_VERSION),
             server_addr: format!("192.168.9.144"),
+            // server_addr: format!("60.163.163.228"),
             control_port: 21902,
             stream_port: 21904,
         };
@@ -437,7 +438,7 @@ pub extern "C" fn time_sync_send(data_ptr: *const TimeSync) {
             average_send_latency: data.averageSendLatency,
             average_transport_latency: data.averageTransportLatency,
             average_decode_latency: data.averageDecodeLatency,
-            idle_time: data.idleTime,
+            idle_time: data.idleTime/2,
             fec_failure: data.fecFailure,
             fec_failure_in_second: data.fecFailureInSecond,
             fec_failure_total: data.fecFailureTotal,
